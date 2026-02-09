@@ -22,6 +22,7 @@ This project builds upon earlier single-script approaches to OPNsense high avail
 **Iterative Development**: [lavacano's enhanced versions](https://gist.github.com/lavacano/a678e65d31df9bec344e572461ed3e10) expanded on the original concept with improved error handling, additional service management, and better logging capabilities. These iterations identified key pain points and reliability issues in production environments.
 
 **Current Solution**: This multi-script architecture represents a complete redesign addressing the limitations discovered in single-script approaches:
+
 - **Separation of Concerns**: Distinct scripts for different phases (boot enforcement, live failover, route management)
 - **Production Hardening**: Comprehensive error handling, circuit breakers, and failure tracking
 - **Operational Excellence**: Structured logging, dry-run testing, and configuration validation
@@ -32,15 +33,18 @@ The evolution from single-script to multi-script architecture reflects lessons l
 ## 📋 Prerequisites
 
 ### Hardware Requirements
+
 - Two identical OPNsense firewalls
 - Dedicated sync interface between firewalls
 - Shared network segments for WAN and LAN
 - **Recommended**: Configure WAN interfaces with identical MAC addresses for seamless failover
 
 ### OPNsense Configuration
+
 Before installing the scripts, configure your firewalls:
 
 #### Primary Firewall
+
 1. Go to **System → High Availability → Settings**
    - Enable HA by checking "Synchronize States"
    - Set the Synchronize Interface (dedicated SYNC interface)
@@ -50,11 +54,13 @@ Before installing the scripts, configure your firewalls:
    - Create tunable: `net.inet.carp.preempt` = `1`
 
 #### Secondary Firewall
+
 1. Configure HA Sync settings pointing to primary firewall
-2. Go to **Interfaces → Virtual IPs → Settings**
+2. Go to **System → High Availability → Settings**
    - Check "Disable Preemptive Mode"
 
 #### Both Firewalls
+
 1. Set up CARP VIPs on WAN and LAN interfaces
    - Use unique VHID for each interface
    - Primary: advskew = 0, Secondary: advskew = 100
@@ -80,13 +86,13 @@ mkdir -p /usr/local/etc/rc.d
 
 Copy the following files to both firewalls:
 
-| File | Location | Purpose |
-|------|----------|---------|
-| `ha_failover.conf` | `/usr/local/etc/` | Central configuration |
-| `validate_ha_config.php` | `/usr/local/etc/` | Configuration validator |
-| `10-failover.php` | `/usr/local/etc/rc.syshook.d/carp/` | Main failover logic |
-| `98-ha_set_routes.php` | `/usr/local/etc/rc.syshook.d/` | Route management |
-| `99-ha_passive_enforcer.sh` | `/usr/local/etc/rc.d/` | Boot-time enforcer |
+| File                        | Location                            | Purpose                 |
+| --------------------------- | ----------------------------------- | ----------------------- |
+| `ha_failover.conf`          | `/usr/local/etc/`                   | Central configuration   |
+| `validate_ha_config.php`    | `/usr/local/etc/`                   | Configuration validator |
+| `10-failover.php`           | `/usr/local/etc/rc.syshook.d/carp/` | Main failover logic     |
+| `98-ha_set_routes.php`      | `/usr/local/etc/rc.syshook.d/`      | Route management        |
+| `99-ha_passive_enforcer.sh` | `/usr/local/etc/rc.d/`              | Boot-time enforcer      |
 
 ### Step 3: Set Permissions
 
@@ -112,6 +118,7 @@ echo 'ha_passive_enforcer_enable="YES"' >> /etc/rc.conf.local
 Edit `/usr/local/etc/ha_failover.conf` for your environment:
 
 #### Static IP Configuration
+
 ```json
 {
   "interfaces": {
@@ -129,8 +136,13 @@ Edit `/usr/local/etc/ha_failover.conf` for your environment:
 ```
 
 #### DHCP Configuration
+
 ```json
 {
+  "interfaces": {
+    "wan_key": "wan",
+    "tunnel_key": "opt1"
+  },
   "network": {
     "wan_mode": "dhcp",
     "wan_gateway_name": "WAN_DHCP_GW"
@@ -138,9 +150,33 @@ Edit `/usr/local/etc/ha_failover.conf` for your environment:
 }
 ```
 
+#### PPPoE Configuration
+
+```json
+{
+  "interfaces": {
+    "wan_key": "wan",
+    "tunnel_key": "opt1"
+  },
+  "network": {
+    "wan_mode": "pppoe",
+    "wan_gateway_name": "WAN_GW"
+  }
+}
+```
+
+#### For IPv6-less Setups
+
+Remove these keys from the configuration:
+
+- `tunnel_key`
+- `tunnel_gateway_name`
+- `target_v6`
+
 ### Key Configuration Sections
 
 #### Health Check Configuration
+
 ```json
 "health_check": {
   "local_target": "192.168.1.1",
@@ -152,6 +188,20 @@ Edit `/usr/local/etc/ha_failover.conf` for your environment:
 ```
 
 #### Service Management
+
+If you use Free Range Routing then add tit as core service.
+
+```json
+"ha_core_services": [
+  {
+    "name": "frr",
+    "pid_file": "/var/run/frr/frr.pid",
+    "shutdown_timeout": 20
+  }
+```
+
+Change the DHCP and DNS, if you dont use ISC DHCPv4 Server or Unbound DNS. Add other services that also need to stop in BACKUP mode.
+
 ```json
 "ha_controlled_services": [
   {
@@ -166,21 +216,49 @@ Edit `/usr/local/etc/ha_failover.conf` for your environment:
 ]
 ```
 
+#### Timeouts
+
+```json
+"timeouts": {
+  "master_transition_delay": 20,
+  "event_cooldown_period": 600,
+  "passive_enforcer_delay": 20,
+  "route_settle_delay": 3,
+  "lock_wait_timeout": 90,
+  "health_check_retries": 3,
+  "health_check_retry_delay": 5,
+  "service_verify_timeout": 15
+}
+```
+
+| Timeout                    | Min | Max  | Default |
+| -------------------------- | --- | ---- | ------- |
+| `master_transition_delay`  | 0   | 300  | 20      |
+| `event_cooldown_period"`   | 30  | 3600 | 600     |
+| `passive_enforcer_delay`   |     |      | 20      |
+| `route_settle_delay`       | 0   | 60   | 2       |
+| `lock_wait_timeout`        | 10  | 300  | 60      |
+| `health_check_retries`     | 1   | 5    | 3       |
+| `health_check_retry_delay` | 1   | 20   | 5       |
+| `service_verify_timeout`   | 5   | 60   | 15      |
+
 ## 🧪 Testing
 
 ### Validate Configuration
+
 ```bash
 php /usr/local/etc/validate_ha_config.php
 ```
 
 ### Dry Run Testing
+
 Test failover logic without making changes:
 
 ```bash
 # Simulate MASTER transition
 php /usr/local/etc/rc.syshook.d/carp/10-failover.php carp MASTER dry-run
 
-# Simulate BACKUP transition  
+# Simulate BACKUP transition
 php /usr/local/etc/rc.syshook.d/carp/10-failover.php carp BACKUP dry-run
 
 # Test boot enforcer
@@ -188,6 +266,7 @@ sh /usr/local/etc/rc.d/99-ha_passive_enforcer.sh dry-run
 ```
 
 ### Live Testing
+
 1. **Boot Test**: Reboot secondary firewall, verify it stays in BACKUP state
 2. **Failover Test**: Put primary in maintenance mode, verify secondary becomes MASTER
 3. **Failback Test**: Remove maintenance mode, verify primary reclaims MASTER
@@ -195,18 +274,21 @@ sh /usr/local/etc/rc.d/99-ha_passive_enforcer.sh dry-run
 ## 📊 Monitoring
 
 ### Log Locations
-- **Failover Events**: `/var/log/system.log` (search for `ha_failover`)
+
+- **Failover Events**: `/var/log/system/latest.log` (search for `ha_failover`)
 - **Boot Enforcer**: `/var/log/ha_enforcer.log`
 - **CARP Status**: **Lobby → Dashboard → CARP**
 
 ### Log Format
+
 All logs use structured JSON format:
+
 ```json
 {
   "timestamp": "2024-01-15T10:30:00+00:00",
   "event": "master_transition_complete",
   "pid": 12345,
-  "context": {"transition_time": 25}
+  "context": { "transition_time": 25 }
 }
 ```
 
@@ -215,20 +297,24 @@ All logs use structured JSON format:
 ### Common Issues
 
 **Split-brain condition detected**
+
 - Check CARP sync interface connectivity
 - Verify sync interface configuration matches on both nodes
 
 **Services not starting/stopping**
+
 - Verify service names in configuration match OPNsense service names
 - Check PID file paths are correct
 - Review service-specific logs
 
 **Health checks failing**
+
 - Verify target IPs are reachable
 - Check ping timeouts are appropriate for your network
 - Review external connectivity requirements
 
 ### Debug Commands
+
 ```bash
 # Check CARP status
 ifconfig | grep carp
@@ -237,10 +323,10 @@ ifconfig | grep carp
 netstat -rn
 
 # Check service status
-service status <service_name>
+service <service_name> status
 
 # Manual service control
-/usr/local/etc/rc.syshook.d/carp/10-failover.php carp MASTER
+php /usr/local/etc/rc.syshook.d/carp/10-failover.php carp MASTER
 ```
 
 ## 🔒 Security Considerations
@@ -282,6 +368,7 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 ## 🆘 Support
 
 For issues and questions:
+
 1. Check the troubleshooting section
 2. Review log files for error details
 3. Open an issue with configuration and log excerpts
