@@ -32,11 +32,13 @@ trap cleanup EXIT INT TERM
 # Helper function to stop a list of services defined by a JQ filter
 stop_service_list() {
     local service_list_jq_filter=$1
-    echo "$service_list_jq_filter" | jq -r '.[]? | "\(.name):\(.pid_file):\(.shutdown_timeout // 10)"' "$HA_CONF" | while IFS=: read -r service_name pid_file shutdown_timeout; do
+    local array_field=$2
+    # log "Processing service list with filter: $service_list_jq_filter and array field: $array_field"
+    echo "$service_list_jq_filter" | echo "$array_field" | while IFS=: read -r service_name pid_file shutdown_timeout; do
         if [ -f "$pid_file" ] && PID=$(cat "$pid_file" 2>/dev/null) && [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
             log "Stopping '$service_name' (PID: $PID, Timeout: ${shutdown_timeout}s)..."
             [ $IS_DRY_RUN -eq 0 ] && kill "$PID"
-            
+
             shutdown_wait=$shutdown_timeout
             while [ $shutdown_wait -gt 0 ]; do
                 if [ $IS_DRY_RUN -eq 1 ] || ! kill -0 "$PID" 2>/dev/null; then
@@ -82,13 +84,14 @@ ha_passive_enforcer_start()
     log "HA configuration file is valid."
     # ----------------------------------------
 
-    LOCK_TIMEOUT=$(jq -r '.timeouts.lock_wait_timeout // 60' "$HA_CONF" 2>/dev/null)
-    exec 200>"$LOCK_FILE"
-    if ! flock -n -w "$LOCK_TIMEOUT" 200; then
-        log "ERROR: Could not acquire lock after ${LOCK_TIMEOUT}s. Aborting."
-        exit 1;
-    fi
-    echo $$ >&200
+    # Locking doesn't work reliable. Sometimes it works and sometimes not. So we disable it for now and rely on the fact that this script is only called by the HA system and not manually.
+    # LOCK_TIMEOUT=$(jq -r '.timeouts.lock_wait_timeout // 60' "$HA_CONF" 2>/dev/null)
+    # exec 200>"$LOCK_FILE"
+    # if ! flock -n -w "$LOCK_TIMEOUT" 200; then
+    #     log "ERROR: Could not acquire lock after ${LOCK_TIMEOUT}s. Aborting."
+    #     exit 1;
+    # fi
+    # echo $$ >&200
 
     if ! grep -q "<disablepreempt>" /conf/config.xml; then
         log "PRIMARY node detected. No action needed."
@@ -96,16 +99,16 @@ ha_passive_enforcer_start()
     fi
 
     log "BACKUP node detected. Enforcing passive state."
-    
+
     DELAY=$(jq -r '.timeouts.passive_enforcer_delay // 20' "$HA_CONF" 2>/dev/null)
     log "Waiting for ${DELAY}s for system to settle..."
     [ $IS_DRY_RUN -eq 0 ] && sleep "$DELAY"
 
     log "Stopping standard HA-controlled services..."
-    stop_service_list "$(jq -c '.ha_controlled_services' "$HA_CONF" 2>/dev/null)"
+    stop_service_list "$(jq -c '.ha_controlled_services' "$HA_CONF")" "$(jq -r '.ha_controlled_services[]? | "\(.name):\(.pid_file):\(.shutdown_timeout // 10)"' "$HA_CONF")"
 
     log "Stopping core HA-controlled services..."
-    stop_service_list "$(jq -c '.ha_core_services' "$HA_CONF" 2>/dev/null)"
+    stop_service_list "$(jq -c '.ha_core_services' "$HA_CONF")" "$(jq -r '.ha_core_services[]? | "\(.name):\(.pid_file):\(.shutdown_timeout // 10)"' "$HA_CONF")"
 
     log "Setting default routes via dedicated script..."
     if [ $IS_DRY_RUN -eq 1 ]; then
