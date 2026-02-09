@@ -10,8 +10,8 @@ use OPNsense\Core\Backend;
 
 function log_enforcer($message, $is_error = true)
 {
-    $level = $is_error ? "ERROR" : "INFO";
-    logger("ha_passive_enforcer: ${level} - " . $message);
+    $level = $is_error ? LOG_ERR : LOG_NOTICE;
+    syslog($level, "ha_failover 98-ha_set_routes.php: " . $message);
 }
 
 function verify_route_installed($gateway_ip, $family): bool
@@ -19,7 +19,7 @@ function verify_route_installed($gateway_ip, $family): bool
     $be = new Backend();
     $routes_json = $be->configdRun("interface routes list -n json");
     $routes = json_decode($routes_json, true) ?? [];
-    
+
     foreach ($routes as $route) {
         if ($route['destination'] === 'default' &&
             $route['gateway'] === $gateway_ip &&
@@ -73,7 +73,7 @@ try {
     if (json_last_error() !== JSON_ERROR_NONE) {
         throw new \Exception("Failed to decode ha_failover.conf JSON: " . json_last_error_msg());
     }
-    
+
     $settle_delay = $ha_conf['timeouts']['route_settle_delay'] ?? 2;
     $failover_gateways = $ha_conf['failover_gateways'] ?? [
         'ipv4' => 'LAN_FAILOVER_GW',
@@ -83,7 +83,7 @@ try {
     $gw_v6_name = $failover_gateways['ipv6'];
 
     $config = load_config_from_file("/conf/config.xml");
-    $gws = $config["gateways"]["gateway_item"] ?? [];
+    $gws = $config["OPNsense"]["Gateways"]["gateway_item"] ?? [];
     $gw_v4 = null; $gw_v4_if_friendly = null;
     $gw_v6 = null; $gw_v6_if_friendly = null;
 
@@ -91,10 +91,12 @@ try {
         if (isset($gw["name"]) && $gw["name"] === $gw_v4_name) {
             $gw_v4 = $gw["gateway"];
             $gw_v4_if_friendly = $gw["interface"];
+            log_enforcer("Found failover gateway '{$gw_v4_name}' with IP {$gw_v4} on interface {$gw_v4_if_friendly}.", false);
         }
         if (isset($gw["name"]) && $gw["name"] === $gw_v6_name) {
             $gw_v6 = $gw["gateway"];
             $gw_v6_if_friendly = $gw["interface"];
+            log_enforcer("Found failover gateway '{$gw_v6_name}' with IP {$gw_v6} on interface {$gw_v6_if_friendly}.", false);
         }
     }
 
@@ -106,7 +108,7 @@ try {
     $ifdetails = legacy_interfaces_details();
     $v4_ok = set_and_verify_route($gw_v4, $gw_v4_if_friendly, $settle_delay, $ifdetails);
     $v6_ok = set_and_verify_route($gw_v6, $gw_v6_if_friendly, $settle_delay, $ifdetails);
-    
+
     $all_ok = $v4_ok && $v6_ok;
     exit($all_ok ? 0 : 1);
 
