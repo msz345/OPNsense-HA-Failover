@@ -1,3 +1,4 @@
+#!/usr/local/bin/php
 <?php
 
 /*
@@ -73,7 +74,7 @@ final class SettingsDTO
         // Network Validation
         $network = $config['network'] ?? [];
         $this->wanMode = $network['wan_mode'] ?? 'static';
-        if (!in_array($this->wanMode, ['static', 'dhcp'])) throw new HAConfigurationException("network.wan_mode must be 'static' or 'dhcp'.");
+        if (!in_array($this->wanMode, ['static', 'dhcp', 'pppoe'])) throw new HAConfigurationException("network.wan_mode must be 'static' or 'dhcp' or 'pppoe'.");
         if ($this->wanMode === 'static') {
             $this->wanIpv4 = filter_var($network['wan_ipv4'] ?? null, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) ?: throw new HAConfigurationException("A valid network.wan_ipv4 is required.");
             $this->wanSubnetV4 = (int)($network['wan_subnet_v4'] ?? 0);
@@ -306,8 +307,10 @@ final class FailoverManager
             $configArray['interfaces'][$this->settings->wanInterfaceKey]['ipaddr'] = 'dhcp';
             unset($configArray['interfaces'][$this->settings->wanInterfaceKey]['subnet']);
         } else {
-            $configArray['interfaces'][$this->settings->wanInterfaceKey]['ipaddr'] = $this->settings->wanIpv4;
-            $configArray['interfaces'][$this->settings->wanInterfaceKey]['subnet'] = $this->settings->wanSubnetV4;
+            if ($this->wanMode === 'static') {
+                $configArray['interfaces'][$this->settings->wanInterfaceKey]['ipaddr'] = $this->settings->wanIpv4;
+                $configArray['interfaces'][$this->settings->wanInterfaceKey]['subnet'] = $this->settings->wanSubnetV4;
+            }
         }
         $configArray['interfaces'][$this->settings->wanInterfaceKey]['enable'] = true;
         $configArray['interfaces'][$this->settings->wanInterfaceKey]['gateway'] = $this->settings->wanGatewayName;
@@ -526,6 +529,11 @@ final class FailoverManager
             $this->structuredLog('health_check_failed', ['reason' => 'invalid_dhcp_lease', 'current_ip' => $wan_ip ?: 'None'], LOG_ERR);
             return false;
         }
+        // No health check failure for PPPoE mode based on IP presence, as PPPoE can have delayed IP assignment and may rely more on external checks.
+        // elseif ($this->settings->wanMode === 'pppoe' && (empty($wan_ip) )) {
+        //     $this->structuredLog('health_check_failed', ['reason' => 'wan_ip_missing', 'current_ip' => $wan_ip ?: 'None'], LOG_ERR);
+        //     return false;
+        // }
 
         $local_ok = !$this->settings->localHealthCheckTarget;
         if ($this->settings->localHealthCheckTarget) {
@@ -560,7 +568,7 @@ final class FailoverManager
 
         $results = ['local_ok' => $local_ok, 'external_v4_ok' => $external_v4_ok, 'external_v6_ok' => $external_v6_ok];
         $this->structuredLog('health_check_results', $results, LOG_INFO);
-        
+
         if ($this->settings->requireExternalConnectivity) {
             if ($local_ok && $external_ok) return true;
         } else {
