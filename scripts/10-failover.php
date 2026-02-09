@@ -1,3 +1,4 @@
+#!/usr/local/bin/php
 <?php
 
 /*
@@ -238,7 +239,7 @@ final class FailoverManager
             return 1;
         }
 
-        $this->structuredLog('state_change_detected', ['from' => $scriptState->value, 'to' => $eventStatus->value]);
+        $this->structuredLog('state_change_detected', ['from' => $scriptState->value, 'to' => $eventStatus->value], LOG_NOTICE);
         $success = match ($eventStatus) {
             CarpStatus::MASTER => $this->handleMasterTransition(),
             CarpStatus::BACKUP => $this->handleBackupTransition(),
@@ -306,8 +307,10 @@ final class FailoverManager
             $configArray['interfaces'][$this->settings->wanInterfaceKey]['ipaddr'] = 'dhcp';
             unset($configArray['interfaces'][$this->settings->wanInterfaceKey]['subnet']);
         } else {
-            $configArray['interfaces'][$this->settings->wanInterfaceKey]['ipaddr'] = $this->settings->wanIpv4;
-            $configArray['interfaces'][$this->settings->wanInterfaceKey]['subnet'] = $this->settings->wanSubnetV4;
+            if ($this->wanMode === 'static') {
+                $configArray['interfaces'][$this->settings->wanInterfaceKey]['ipaddr'] = $this->settings->wanIpv4;
+                $configArray['interfaces'][$this->settings->wanInterfaceKey]['subnet'] = $this->settings->wanSubnetV4;
+            }
         }
         $configArray['interfaces'][$this->settings->wanInterfaceKey]['enable'] = true;
         $configArray['interfaces'][$this->settings->wanInterfaceKey]['gateway'] = $this->settings->wanGatewayName;
@@ -340,7 +343,7 @@ final class FailoverManager
              return false;
         }
 
-        $this->structuredLog('master_transition_complete');
+        $this->structuredLog('master_transition_complete', [], LOG_NOTICE);
         return true;
     }
 
@@ -369,7 +372,7 @@ final class FailoverManager
 
         if (!$this->applyConfigurationWithRetry('HA Failover: Deactivating to BACKUP state', $configArray)) return false;
 
-        $this->structuredLog('backup_transition_complete');
+        $this->structuredLog('backup_transition_complete', [], LOG_NOTICE);
         return true;
     }
 
@@ -503,7 +506,7 @@ final class FailoverManager
                 return true;
             }
             if ($i < $this->settings->healthCheckRetries) {
-                $this->structuredLog('health_check_retry', ['attempt' => $i, 'delay' => $this->settings->healthCheckRetryDelay], LOG_NOTICE);
+                $this->structuredLog('health_check_retry', ['attempt' => $i, 'delay' => $this->settings->healthCheckRetryDelay]);
                 sleep($this->settings->healthCheckRetryDelay);
             }
         }
@@ -560,7 +563,7 @@ final class FailoverManager
 
         $results = ['local_ok' => $local_ok, 'external_v4_ok' => $external_v4_ok, 'external_v6_ok' => $external_v6_ok];
         $this->structuredLog('health_check_results', $results, LOG_INFO);
-        
+
         if ($this->settings->requireExternalConnectivity) {
             if ($local_ok && $external_ok) return true;
         } else {
@@ -710,6 +713,7 @@ final class FailoverManager
     private function structuredLog(string $event, array $context = [], int $priority = LOG_INFO): void
     {
         $logData = [
+            'ha_failover' => '10-failover.php',
             'timestamp' => date('c'),
             'event' => $event,
             'pid' => getmypid(),
