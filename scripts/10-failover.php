@@ -532,14 +532,14 @@ final class FailoverManager
 
         $local_ok = !$this->settings->localHealthCheckTarget;
         if ($this->settings->localHealthCheckTarget) {
-            if (mwexecf('/sbin/ping -c 1 -W 1 ' . escapeshellarg($this->settings->localHealthCheckTarget), true) === 0) {
+            if (mwexecfm('/sbin/ping -c 1 -W 1 ' . escapeshellarg($this->settings->localHealthCheckTarget)) === 0) {
                 $local_ok = true;
             }
         }
 
         $external_v4_ok = false;
         foreach ($this->settings->healthCheckTargetsV4 as $target) {
-            if (mwexecf('/sbin/ping -c 1 -W ' . escapeshellarg((string)$this->settings->pingTimeout) . ' ' . escapeshellarg($target), true) === 0) {
+            if (mwexecfm('/sbin/ping -c 1 -W ' . escapeshellarg((string)$this->settings->pingTimeout) . ' ' . escapeshellarg($target)) === 0) {
                 $external_v4_ok = true;
                 break;
             }
@@ -551,7 +551,7 @@ final class FailoverManager
                 $this->structuredLog('health_check_warn', ['reason' => 'no_ipv6_on_tunnel', 'interface' => $this->settings->tunnelInterfaceKey], LOG_WARNING);
             } else {
                 foreach ($this->settings->healthCheckTargetsV6 as $target) {
-                    if (mwexecf("ping6 -c 1 -W " . escapeshellarg((string)$this->settings->pingTimeout) . " " . escapeshellarg($target), true) === 0) {
+                    if (mwexecfm("ping6 -c 1 -W " . escapeshellarg((string)$this->settings->pingTimeout) . " " . escapeshellarg($target)) === 0) {
                         $external_v6_ok = true;
                         break;
                     }
